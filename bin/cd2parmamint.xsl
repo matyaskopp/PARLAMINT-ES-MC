@@ -9,7 +9,8 @@
                 xmlns:tei="http://www.tei-c.org/ns/1.0"
                 xmlns:xs="http://www.w3.org/2001/XMLSchema"
                 xmlns:et="http://nl.ijs.si/et"
-                exclude-result-prefixes="xsl et tei">
+                xmlns:mk="http://ufal.mff.cuni.cz/matyas-kopp"
+                exclude-result-prefixes="xsl et mk tei">
   <xsl:output method="xml" version="1.0" encoding="utf-8" indent="yes" omit-xml-declaration="no"/>
   <xsl:strip-space elements="*"/>
   <xsl:preserve-space elements="speech"/>
@@ -21,21 +22,6 @@
   <xsl:variable name="today-iso" select="format-date(current-date(), '[Y0001]-[M01]-[D01]')"/>
   <xsl:variable name="today" select="format-date(current-date(), '[Y0001]-[M01]-[D01]')"/>
   
-  <xsl:variable name="respStmt">
-    <respStmt xmlns="http://www.tei-c.org/ns/1.0">
-      <persName>María Calzada Pérez</persName>
-      <resp xml:lang="en">Data retrieval and conversion to XML</resp>
-    </respStmt>
-    <respStmt xmlns="http://www.tei-c.org/ns/1.0">
-      <persName>Matyáš Kopp</persName>
-      <resp xml:lang="en">Government person metadata retrieval</resp>
-      <resp xml:lang="en">Conversion to ParlaMint TEI</resp>
-    </respStmt>
-    <respStmt xmlns="http://www.tei-c.org/ns/1.0">
-      <persName>Tomaž Erjavec</persName>
-      <resp xml:lang="en">Conversion to ParlaMint TEI</resp>
-    </respStmt>
-  </xsl:variable>
   
   <!-- More metadata could probably be collected apart from the date? -->
   <xsl:variable name="session-date">
@@ -139,15 +125,6 @@
             <xsl:text>Legislatura </xsl:text>
             <xsl:value-of select="legislature"/>
           </meeting>
-          <xsl:copy-of select="$respStmt"/>
-          <funder>
-            <orgName xml:lang="es">CLARIN infraestructura de investigación científica</orgName>
-            <orgName xml:lang="en">The CLARIN research infrastructure</orgName>
-          </funder>
-          <funder>
-            <orgName xml:lang="es">Ministerio de Ciencia e Innovación</orgName>
-            <orgName xml:lang="en">Ministry of Science and Innovation of Spain</orgName>
-          </funder>
         </titleStmt>
         <editionStmt>
           <edition>2.0</edition>
@@ -211,7 +188,7 @@
             <!-- Collect all party affiliations -->
             <xsl:for-each select="/ecpc_CD/body//intervention/speaker/affiliation">
               <xsl:sort/>
-              <xsl:variable name="party_name" select="normalize-space(national_party)"/>
+              <xsl:variable name="party_name" select="mk:fix-party-name(national_party)"/>
               <xsl:if test="et:set($party_name)">
                 <org role="politicalParty" xml:id="party.{et:str2id($party_name)}">
                   <orgName full="init">
@@ -399,9 +376,16 @@
        "Rumors, Applause, Denials, .."
   -->
   <xsl:template match="omit">
-    <note xmlns="http://www.tei-c.org/ns/1.0">
-      <xsl:apply-templates/>
-    </note>
+    <xsl:choose>
+      <xsl:when test="ancestor::omit">
+        <xsl:apply-templates/>
+      </xsl:when>
+      <xsl:otherwise>
+        <note xmlns="http://www.tei-c.org/ns/1.0">
+          <xsl:apply-templates/>
+        </note>
+      </xsl:otherwise>
+    </xsl:choose>
   </xsl:template>
 
   <xsl:template match="heading">
@@ -429,6 +413,7 @@
         <xsl:choose>
           <xsl:when test="matches(speaker/national_party, '^\s*NA\+?\s*$')">guest</xsl:when>
           <xsl:when test="matches(speaker/post, '^\s*(VICE)?PRESIDENT[AE]\s*$', 'i')">chair</xsl:when>
+          <xsl:when test="not(speaker/institution/ni[text()='CD'])">guest</xsl:when>
           <xsl:otherwise>regular</xsl:otherwise>
         </xsl:choose>
       </xsl:attribute>
@@ -454,30 +439,39 @@
       <xsl:variable name="t1">
         <xsl:choose>
           <xsl:when test="preceding-sibling::*[1]/self::omit">
-            <xsl:value-of select="replace(., '^\. ', '')"/>
+            <xsl:value-of select="replace(., '^\.', '')"/>
           </xsl:when>
           <xsl:otherwise>
             <xsl:value-of select="."/>
           </xsl:otherwise>
         </xsl:choose>
       </xsl:variable>
+      <xsl:variable name="t2" select="replace($t1,'&#x85;','…')"/>
+      <xsl:variable name="t3" select="replace($t2,'([^\d\p{L}])-(\p{L})','$1- $2')"/>
+      <xsl:variable name="t4" select="replace($t3,'^-(\p{L})','- $1')"/>
+      <xsl:variable name="t5" select="replace($t4,'(\p{L})-([^\d\p{L}])','$1 -$2')"/>
+      <xsl:variable name="t6" select="replace($t5,'(\p{L})-$','$1 -')"/>
+      <xsl:variable name="tfixed" select="$t6"/>
       <xsl:choose>
         <xsl:when test="preceding-sibling::*[1]/self::page_number and
                         following::*[1]/self::page_number">
-          <xsl:value-of select="replace($t1, '^ *\n(.+?) *\n$', '$1', 's')"/>
+          <xsl:value-of select="replace($tfixed, '^ *\n(.+?) *\n$', '$1', 's')"/>
         </xsl:when>
         <xsl:when test="preceding-sibling::*[1]/self::page_number">
-          <xsl:value-of select="replace($t1, '^ *\n', '')"/>
+          <xsl:value-of select="replace($tfixed, '^ *\n', '')"/>
         </xsl:when>
         <xsl:when test="following::*[1]/self::page_number">
-          <xsl:value-of select="replace($t1, ' *\n$', '')"/>
+          <xsl:value-of select="replace($tfixed, ' *\n$', '')"/>
         </xsl:when>
       <xsl:otherwise>
-        <xsl:value-of select="$t1"/>
+        <xsl:value-of select="$tfixed"/>
       </xsl:otherwise>
       </xsl:choose>
     </xsl:variable>
     <xsl:variable name="pass1">
+      <xsl:if test="preceding-sibling::*[1]/self::omit and matches($text,'^ *\n')">
+        <lb xmlns="http://www.tei-c.org/ns/1.0"/>
+      </xsl:if>
       <xsl:for-each select="tokenize($text, '\n')">
         <xsl:if test="normalize-space(.)">
           <lb xmlns="http://www.tei-c.org/ns/1.0"/>
@@ -503,10 +497,10 @@
   <xsl:template match="text()">
     <xsl:choose>
       <xsl:when test="preceding-sibling::*[1]/self::omit">
-        <xsl:value-of select="replace(., '^\. ', '')"/>
+        <xsl:value-of select="replace(replace(., '^\. ', ''),'&#x85;','…')"/>
       </xsl:when>
       <xsl:otherwise>
-        <xsl:value-of select="."/>
+        <xsl:value-of select="replace(.,'&#x85;','…')"/>
       </xsl:otherwise>
     </xsl:choose>
   </xsl:template>
@@ -579,7 +573,7 @@
         <!-- Insert reference to party, parties are collected separately in the teiHeader -->
         <xsl:variable name="party" select="affiliation/national_party"/>
         <xsl:if test="et:set($party)">
-          <affiliation role="member" ref="#party.{et:str2id($party)}" when="{$session-date}"/>
+          <affiliation role="member" ref="#party.{et:str2id(mk:fix-party-name($party))}" when="{$session-date}"/>
         </xsl:if>
         <!--
         <xsl:if test="./post[starts-with(text(),'MINISTR')]">
@@ -651,7 +645,7 @@
               <xsl:value-of select="normalize-space(lower-case(.))"/>
             </nameLink>
           </xsl:when>
-          <xsl:when test="matches(., '^Del?', 'i')">
+          <xsl:when test="matches(., '^Del?$', 'i')">
             <nameLink>
               <xsl:value-of select="normalize-space(et:cap-case(.))"/>
             </nameLink>
@@ -671,9 +665,8 @@
   <xsl:function name="et:name2id">
     <xsl:param name="name"/>
     <xsl:variable name="persName" select="et:speaker2name($name)"/>
-    <xsl:value-of select="et:str2id(concat(
-                          $persName/tei:surname[1],
-                          $persName/tei:forename[1]))"/>
+    <xsl:value-of select="et:str2id(string-join(
+                          $persName/*,''))"/>
   </xsl:function>
   
   <!-- IDREF for subcorpus -->
@@ -810,6 +803,27 @@
       </xsl:when>
       <xsl:otherwise>
         <xsl:value-of select="concat(upper-case($init), lower-case($tail))"/>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:function>
+
+  <xsl:function name="mk:fix-party-name">
+    <xsl:param name="party"/>
+    <xsl:choose>
+      <xsl:when test="$party = ' GP'">
+        <xsl:message>WARN: changing party name from ' GP' to 'PP'</xsl:message>
+        <xsl:text>PP</xsl:text>
+      </xsl:when>
+      <xsl:when test="normalize-space($party) = 'PSdeG-PSOE'">
+        <xsl:message>WARN: changing party name from 'PSdeG-PSOE' to 'PsdeG-PSOE'</xsl:message>
+        <xsl:text>PsdeG-PSOE</xsl:text>
+      </xsl:when>
+      <xsl:when test="matches($party,'^.+\(.*\)$')">
+        <xsl:message>WARN: changing party name from 'PSdeG-PSOE' to 'PsdeG-PSOE'</xsl:message>
+        <xsl:value-of select="normalize-space(replace($party,'\(.*\)',''))"/>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:value-of select="normalize-space($party)"/>
       </xsl:otherwise>
     </xsl:choose>
   </xsl:function>

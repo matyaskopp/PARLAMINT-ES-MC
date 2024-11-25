@@ -1,12 +1,14 @@
 DIRSUFFIX =
+JAVA-MEMORY =
+JM := $(shell test -n "$(JAVA-MEMORY)" && echo -n "-Xmx$(JAVA-MEMORY)g")
 
 #Fixing the .tei files
 #Insert word extent for ana, remove empty segs, redo tagUsage
 #We also need to fix root file (date, extents)
 test-fix-tei:
 	rm -f tmp/*
-	cp ParlaMint/ParlaMint-ES.xml tmp
-	bin/fix-tei.pl 'ParlaMint/ParlaMint-ES_2015-01-20-CD150120.xml' ParlaMint.ana tmp
+	cp ParlaMint-ES.TEI/ParlaMint-ES.xml tmp
+	bin/fix-tei.pl 'ParlaMint-ES.TEI/ParlaMint-ES_2015-01-20-CD150120.xml' ParlaMint.ana tmp
 	bin/validate-parlamint.pl schemas tmp
 
 #Fixing the .ana files
@@ -31,22 +33,72 @@ fix-ana:
 nohup-gen:
 	nohup time make gen > log.txt &
 
+ana1: bin/ParCzech/udpipe2
+	mkdir -p tmp.UD$(DIRSUFFIX)
+	find tmp.TEI$(DIRSUFFIX)/ -type f -printf "%P\n" |sort| grep 'ParlaMint-ES_' > tmp.UD$(DIRSUFFIX).fl
+	perl -I bin/ParCzech/lib bin/ParCzech/udpipe2/udpipe2.pl \
+	                             --colon2underscore \
+	                             --model "es:spanish-ancora-ud-2.10-220711" \
+	                             --elements "seg" \
+	                             --debug \
+	                             --no-space-in-punct \
+	                             --try2continue-on-error \
+	                             --filelist tmp.UD$(DIRSUFFIX).fl \
+	                             --input-dir tmp.TEI$(DIRSUFFIX)/ \
+	                             --output-dir tmp.UD$(DIRSUFFIX)/
+
+ana2: bin/ParCzech/nametag2
+	mkdir -p tmp.NER$(DIRSUFFIX)
+	perl -I bin/ParCzech/lib bin/ParCzech/nametag2/nametag2.pl \
+	                                 --model "es:spanish-conll-200831" \
+	                                 --filelist tmp.UD$(DIRSUFFIX).fl \
+	                                 --input-dir tmp.UD$(DIRSUFFIX)/ \
+	                                 --output-dir tmp.NER$(DIRSUFFIX)
+
+ana-finalize:
+	echo "TODO $@"
+	mkdir ParlaMint-ES$(DIRSUFFIX).TEI.ana || :
+	rm -rf ParlaMint-ES$(DIRSUFFIX).TEI.ana/*
+	cp tmp.TEI$(DIRSUFFIX)/ParlaMint-ES.xml tmp.NER$(DIRSUFFIX)/ParlaMint-ES.xml
+	$s -xsl:bin/ParlaMint-ES-finalize.xsl \
+	    outDir=ParlaMint-ES$(DIRSUFFIX).TEI.ana \
+	    inListPerson=../tmp.TEI$(DIRSUFFIX)/ParlaMint-ES-listPerson.xml  \
+	    inListOrg=../tmp.TEI$(DIRSUFFIX)/ParlaMint-ES-listOrg.xml \
+	    inTaxonomiesDir=../templates \
+	    type=TEI.ana \
+	    dirify=1 \
+	    tmp.NER$(DIRSUFFIX)/ParlaMint-ES.xml
+
+tei-finalize:
+	echo "TODO $@"
+	mkdir ParlaMint-ES$(DIRSUFFIX).TEI || :
+	rm -rf ParlaMint-ES$(DIRSUFFIX).TEI/*
+	$s -xsl:bin/ParlaMint-ES-finalize.xsl \
+	    outDir=ParlaMint-ES$(DIRSUFFIX).TEI \
+	    inListPerson=../tmp.TEI$(DIRSUFFIX)/ParlaMint-ES-listPerson.xml  \
+	    inListOrg=../tmp.TEI$(DIRSUFFIX)/ParlaMint-ES-listOrg.xml \
+	    inTaxonomiesDir=../templates \
+	    anaDir=../ParlaMint-ES$(DIRSUFFIX).TEI.ana/ \
+	    type=TEI \
+	    dirify=1 \
+	    tmp.TEI$(DIRSUFFIX)/ParlaMint-ES.xml
+
 # Process ParlaMint-ES corpus
 gen:	cnv1 xis cnv2 val
 
 # Validate corpus
 val:
 	echo "TODO: validation"
-	# $s -xi -xsl:bin/copy.xsl ParlaMint$(DIRSUFFIX)/ParlaMint-ES.xml | $j schemas/parla-clarin.rng
-	# -${vrt} ParlaMint$(DIRSUFFIX)/ParlaMint-ES.xml
-	# -${vct} ParlaMint$(DIRSUFFIX)/ParlaMint-ES_*.xml
-	# bin/validate-parlamint.pl schemas ParlaMint$(DIRSUFFIX)
+	# $s -xi -xsl:bin/copy.xsl ParlaMint-ES$(DIRSUFFIX).TEI/ParlaMint-ES.xml | $j schemas/parla-clarin.rng
+	# -${vrt} ParlaMint-ES$(DIRSUFFIX).TEI/ParlaMint-ES.xml
+	# -${vct} ParlaMint-ES$(DIRSUFFIX).TEI/ParlaMint-ES_*.xml
+	# bin/validate-parlamint.pl schemas ParlaMint-ES$(DIRSUFFIX).TEI
 
 #Second conversion: from TEI-ish corpus components to final TEI components + root
-cnv2:
-	mkdir ParlaMint$(DIRSUFFIX) || :
-	rm -f ParlaMint$(DIRSUFFIX)/*.xml
-	$s inDir="../tmp$(DIRSUFFIX)" outDir="ParlaMint$(DIRSUFFIX)" componentFiles="../tmp$(DIRSUFFIX)/ParlaMint-component-ES.xml" \
+cnv2: patch-cnv1-result
+	mkdir tmp.TEI$(DIRSUFFIX) || :
+	rm -f tmp.TEI$(DIRSUFFIX)/*.xml
+	$s inDir="../tmp$(DIRSUFFIX)" outDir="tmp.TEI$(DIRSUFFIX)" componentFiles="../tmp$(DIRSUFFIX)/ParlaMint-component-ES.xml" \
 	listOrgTemplate="../templates/ParlaMint-templateOrgs-ES.xml" \
 	govListPerson="../data-wiki/gov-listPerson.xml" \
 	taxonomyDir="../templates" \
@@ -74,9 +126,20 @@ xis: tmp$(DIRSUFFIX)
 tmp$(DIRSUFFIX):
 	mkdir tmp$(DIRSUFFIX)
 
+patch-cnv1-result:
+	cd tmp$(DIRSUFFIX)/; \
+	  ../bin/fix-problematic-files.sh ;\
+	  ../bin/notefixin-scripts/note-fixing-script-01.sh ;\
+	  ../bin/notefixin-scripts/note-fixing-script-02.sh ;\
+	  ../bin/notefixin-scripts/note-fixing-script-03.sh ;\
+	  ../bin/notefixin-scripts/note-fixing-script-04.sh ;\
+	  ../bin/notefixin-scripts/note-fixing-script-05.sh
+	echo "cnv1 patched"
+
+
 CD.sample:
 	mkdir CD.sample
-	ls CD/CD*.xml |sort | perl -ne '($$prev)=($$x//"CD00") =~ m/.*CD(..)/; $$x=$$_;print "$$x" unless $$x =~ m/CD$$prev/; END{print "$$x";}'| xargs -I {} cp {}  CD.sample/
+	ls CD/CD*.xml |sort | perl -ne 'print "$$_" unless $$prev;($$prev)=($$x//"CD00") =~ m/.*CD(..)/; $$x=$$_;print "$$x" unless $$x =~ m/CD$$prev/ || $$x !~ m/CD.[2468]/; END{print "$$x";}' | xargs -I {} cp {}  CD.sample/
 	cp CD/*.dtd CD.sample/
 
 create-sample: CD.sample
@@ -98,17 +161,34 @@ data-gov-wiki2tei:
 	perl bin/gov-wiki2tei.pl data-wiki/gov-listPerson.xml data-wiki/gov-????-??-??.htm
 
 fix-affiliations: bin/affiliations-remove-overlaps.xsl bin/ParlaMint-UA-lib.xsl
-	mv ParlaMint$(DIRSUFFIX)/ParlaMint-ES-listPerson.xml ParlaMint$(DIRSUFFIX)/ParlaMint-ES-listPerson.xml.bak
+	mv tmp.TEI$(DIRSUFFIX)/ParlaMint-ES-listPerson.xml tmp.TEI$(DIRSUFFIX)/ParlaMint-ES-listPerson.xml.bak
 	$s -xsl:bin/affiliations-remove-overlaps.xsl \
-	  ParlaMint$(DIRSUFFIX)/ParlaMint-ES-listPerson.xml.bak \
-	  > ParlaMint$(DIRSUFFIX)/ParlaMint-ES-listPerson.xml
+	  tmp.TEI$(DIRSUFFIX)/ParlaMint-ES-listPerson.xml.bak \
+	  > tmp.TEI$(DIRSUFFIX)/ParlaMint-ES-listPerson.xml
+
+
+######---------------
+annotation-prereq: bin/ParCzech/udpipe2 bin/ParCzech/nametag2 bin/ParCzech/lib
+
+bin/ParCzech/udpipe2: bin/ParCzech bin/ParCzech/lib
+	svn checkout https://github.com/ufal/ParCzech/trunk/src/udpipe2 bin/ParCzech/udpipe2
+bin/ParCzech/nametag2: bin/ParCzech bin/ParCzech/lib
+	svn checkout https://github.com/ufal/ParCzech/trunk/src/nametag2 bin/ParCzech/nametag2
+bin/ParCzech/lib: bin/ParCzech
+	svn checkout https://github.com/ufal/ParCzech/trunk/src/lib bin/ParCzech/lib
+bin/ParCzech:
+	mkdir bin/ParCzech
+
 
 bin/affiliations-remove-overlaps.xsl:
 	svn export https://github.com/ufal/ParlaMint-UA/trunk/Scripts/affiliations-remove-overlaps.xsl bin/affiliations-remove-overlaps.xsl
 bin/ParlaMint-UA-lib.xsl:
 	svn export https://github.com/ufal/ParlaMint-UA/trunk/Scripts/ParlaMint-UA-lib.xsl bin/ParlaMint-UA-lib.xsl
 
-s = java -jar /usr/share/java/saxon.jar
+
+
+saxon = /usr/share/java/saxon.jar
+s = java $(JM) -jar $(saxon)
 j = java -jar /usr/share/java/jing.jar
 P = parallel --gnu --halt 2
 pc = -I % $s -xi -xsl:bin/copy.xsl % | $j schemas/parla-clarin.rng

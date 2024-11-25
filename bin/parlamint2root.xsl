@@ -186,10 +186,52 @@
           </xsl:for-each>
         </xsl:for-each>
       </xsl:variable>
-      <xsl:for-each-group select="$pass1/tei:person | $govPersons//tei:person" group-by="@xml:id">
+      <xsl:variable name="govPersons1">
+        <xsl:for-each select="$govPersons//tei:person">
+          <xsl:variable name="govName" select="./tei:persName"/>
+          <xsl:copy>
+            <xsl:variable name="matchingSpeaker" select="$pass1/tei:person[
+                                                                $govName/tei:forename[1] = tei:persName/tei:forename[1]
+                                                                and
+                                                                $govName/tei:surname[1] = tei:persName/tei:surname[1]
+                                                                and
+                                                                (
+                                                                  $govName/tei:forename[2] = tei:persName/tei:forename
+                                                                  or
+                                                                  not($govName/tei:forename[2])
+                                                                )
+                                                                and
+                                                                (
+                                                                  $govName/tei:surname[2] = tei:persName/tei:surname
+                                                                  or
+                                                                  not($govName/tei:surname[2])
+                                                                )
+                                                                ]"/>
+            <xsl:attribute name="xml:id">
+              <xsl:choose>
+                <xsl:when test="$matchingSpeaker[2] and count(distinct-values($matchingSpeaker/@xml:id))>1">
+                  <xsl:message>WARN: multiple matching person found for <xsl:value-of select="@xml:id"/> (<xsl:value-of select="string-join(distinct-values($matchingSpeaker/@xml:id),' ')"/>)</xsl:message>
+                  <xsl:value-of select="@xml:id"/>
+                </xsl:when>
+                <xsl:when test="$matchingSpeaker[1]">
+                  <xsl:message>WARN: changing government person id from '<xsl:value-of select="@xml:id"/>' to '<xsl:value-of select="$matchingSpeaker[1]/@xml:id"/>'</xsl:message>
+                  <xsl:value-of select="$matchingSpeaker[1]/@xml:id"/>
+                </xsl:when>
+                <xsl:otherwise>
+                  <xsl:value-of select="@xml:id"/>
+                </xsl:otherwise>
+              </xsl:choose>
+            </xsl:attribute>
+            <xsl:apply-templates select="@role"/>
+            <xsl:apply-templates/>
+          </xsl:copy>
+        </xsl:for-each>
+      </xsl:variable>
+      <xsl:for-each-group select="$pass1/tei:person | $govPersons1/tei:person" group-by="@xml:id">
         <xsl:variable name="id" select="current-group()[1]/@xml:id"/>
         <listPerson xmlns="http://www.tei-c.org/ns/1.0" xml:id="{current-group()[1]/@xml:id}">
-          <xsl:copy-of select="current-group()"/>
+          <xsl:copy-of select="current-group()[not(@role)]"/>
+          <xsl:copy-of select="current-group()[@role]"/>
           <!-- <xsl:copy-of select="$govPersons//tei:person[@xml:id = $id]"/> -->
         </listPerson>
       </xsl:for-each-group>
@@ -240,6 +282,13 @@
               <xsl:copy-of select="."/>
             </xsl:for-each>
           </xsl:variable>
+          <xsl:variable name="ignored" select="tei:person/tei:affiliation[
+                                                @role='member'
+                                                and not($orgs//tei:org[@role='parliamentaryGroup']/@xml:id/concat('#',.) = @ref)
+                                                and starts-with(@ref,'#party.')]"/>
+          <xsl:if test="$ignored">
+            <xsl:message>ERROR: ignoring parties (person=<xsl:value-of select="tei:person/@xml:id"/>)</xsl:message>
+          </xsl:if>
           <xsl:for-each select="$list-groups/tei:affiliation">
             <xsl:variable name="group" select="@ref"/>
             <xsl:if test="not(preceding-sibling::tei:affiliation[@ref = $group])">
@@ -320,7 +369,7 @@
       <xsl:apply-templates mode="id-segs" select="@*"/>
       <xsl:attribute name="xml:id">
         <xsl:value-of select="parent::tei:u/@xml:id"/>
-        <xsl:text>.</xsl:text>
+        <xsl:text>.p</xsl:text>
         <xsl:number/>
       </xsl:attribute>
       <xsl:apply-templates mode="id-segs"/>
@@ -345,6 +394,8 @@
   <xsl:template mode="comp" match="@*">
     <xsl:copy/>
   </xsl:template>
+
+  <xsl:template mode="comp" match="tei:pb"/>
 
   <xsl:template mode="comp" match="tei:publicationStmt/tei:date">
     <xsl:copy>
@@ -374,9 +425,11 @@
           <xsl:variable name="seg">
             <xsl:apply-templates mode="comp" select="current-group()"/>
           </xsl:variable>
-          <seg>
-            <xsl:apply-templates mode="edge-out" select="$seg"/>
-          </seg>
+          <xsl:if test="$seg/text()[normalize-space(.)]">
+            <seg>
+              <xsl:apply-templates mode="edge-out" select="$seg"/>
+            </seg>
+          </xsl:if>
           <xsl:apply-templates mode="edge-in" select="$seg"/>
         </xsl:if>
       </xsl:for-each-group>
@@ -384,29 +437,73 @@
   </xsl:template>
   
   <xsl:template mode="edge-out" match="tei:lb"/>
+  <xsl:template mode="edge-out" match="tei:pb"/>
   <xsl:template mode="edge-out" match="tei:*">
     <xsl:if test="following-sibling::text()[normalize-space(.)]">
       <xsl:copy>
         <xsl:apply-templates select="@*"/>
-        <xsl:value-of select="normalize-space(.)"/>
+        <xsl:apply-templates mode="copy" select="*|text()"/>
       </xsl:copy>
-      <xsl:text>&#32;</xsl:text>
+      <xsl:if test="local-name() = 'pb'">
+        <xsl:text>&#32;</xsl:text>
+      </xsl:if>
     </xsl:if>
   </xsl:template>
   <xsl:template mode="edge-out" match="text()">
-    <xsl:value-of select="normalize-space(.)"/>
+    <!--xsl:value-of select="normalize-space(.)"/-->
+    <!--xsl:apply-templates mode="comp" select="."/-->
+    <xsl:variable name="str" select="replace(., '\s+', ' ')"/>
+    <xsl:choose>
+      <xsl:when test="(not(preceding-sibling::tei:*) and matches($str, '^ ')) and
+                      (not(following-sibling::tei:*) and matches($str, ' $'))">
+        <xsl:value-of select="replace($str, '^ (.+?) $', '$1')"/>
+      </xsl:when>
+      <xsl:when test="not(preceding-sibling::tei:*) and matches($str, '^ ')">
+        <xsl:value-of select="replace($str, '^ ', '')"/>
+      </xsl:when>
+      <xsl:when test="not(following-sibling::tei:*) and matches($str, ' $')">
+        <xsl:value-of select="replace($str, ' $', '')"/>
+      </xsl:when>
+      <xsl:when test="(not(preceding-sibling::text()[normalize-space(.)]) and matches($str, '^ ')) and
+                      (not(following-sibling::text()[normalize-space(.)]) and matches($str, ' $'))">
+        <xsl:value-of select="replace($str, '^ (.+?) $', '$1')"/>
+      </xsl:when>
+      <xsl:when test="not(preceding-sibling::text()[normalize-space(.)]) and matches($str, '^ ')">
+        <xsl:value-of select="replace($str, '^ ', '')"/>
+      </xsl:when>
+      <xsl:when test="not(following-sibling::text()[normalize-space(.)]) and matches($str, ' $')">
+        <xsl:value-of select="replace($str, ' $', '')"/>
+      </xsl:when>
+
+      <xsl:otherwise>
+        <xsl:value-of select="$str"/>
+      </xsl:otherwise>
+    </xsl:choose>
   </xsl:template>
+
   <xsl:template mode="edge-in" match="tei:lb"/>
+  <xsl:template mode="edge-in" match="tei:pb"/>
   <xsl:template mode="edge-in" match="tei:*">
     <xsl:if test="not(following-sibling::text()[normalize-space(.)])">
       <xsl:copy>
         <xsl:apply-templates select="@*"/>
-        <xsl:value-of select="normalize-space(.)"/>
+        <xsl:apply-templates mode="copy" select="*|text()"/>
       </xsl:copy>
     </xsl:if>
   </xsl:template>
   <xsl:template mode="edge-in" match="text()"/>
   
+
+  <xsl:template mode="copy" match="tei:*">
+    <xsl:copy>
+      <xsl:apply-templates select="@*"/>
+      <xsl:apply-templates mode="copy" select="*|text()"/>
+    </xsl:copy>
+  </xsl:template>
+  <xsl:template mode="copy" match="text()">
+    <xsl:value-of select="normalize-space(.)"/>
+  </xsl:template>
+
   <!-- Remove leading, trailing and multiple spaces -->
   <xsl:template mode="comp" match="text()[normalize-space(.)]">
     <xsl:variable name="str" select="replace(., '\s+', ' ')"/>
@@ -426,7 +523,7 @@
       </xsl:otherwise>
     </xsl:choose>
   </xsl:template>
-  
+
   <!-- Remove now useless orgs and persons -->
   <xsl:template mode="comp" match="tei:particDesc"/>
 
